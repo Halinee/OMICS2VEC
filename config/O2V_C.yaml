@@ -1,0 +1,96 @@
+experiment: O2V_C
+data_type:
+  - gene_fpkm
+  - isoform_fpkm
+  - mutation
+label_type:
+  - cancer_type
+  - primary_site
+  - sample_type
+  - stage
+  - tumor_event
+raw_data_path: /raid/lhs/biobank/DATA/OMICS2VEC/raw/
+clinical_data_name: clinical.ftr
+label_data_name: label.ftr
+preprocess_params:
+  save_path: /raid/lhs/biobank/DATA/OMICS2VEC/processed/
+  scale_type: zeroone
+training_params:
+  save_path: /raid/lhs/biobank/CKPT/
+  fine_tuning: null
+  project_params:
+    strategy: ddp
+    clip_norm: 50.0
+    entity: hyeonsu
+    gpus: 1
+    logging_interval: step
+    max_epochs: 500
+    monitor: null
+    patience: 100
+    project: OMICS2VEC
+    save_model_name: null
+    seed: 42
+  data_params:
+    batch_size: 32
+    drop_last: false
+    test_size: 0.2
+    num_workers: 4
+    pin_memory: true
+    processed_data_path: null
+    processed_data_name: null
+    seed: 42
+  model_params:
+    predict_label:
+      - cancer_type
+    g_act: lrelu
+    p_act: lrelu
+    origin_dim: null
+    gene_fpkm_dim: null
+    isoform_fpkm_dim: null
+    mutation_dim: null
+    g_hidden_dim:
+      - 1000
+      - 500
+      - 200
+    p_hidden_dim:
+      - 100
+      - 100
+    kl_coef: 0.00025
+    latent_dim: 100
+    output_dim: null
+    g_loss: null
+    p_loss: focal
+    gene_fpkm_loss: mae
+    isoform_fpkm_loss: mae
+    mutation_loss: bce
+    g_lr: 0.0005
+    p_lr: 0.0005
+    g_opt: adabelief
+    p_opt: adabelief
+embedding_params:
+  save_path: /raid/lhs/biobank/EMBED/
+analysis_params:
+  analysis_list:
+    - sample_type
+    - cancer_type
+    - tumor_event
+    - primary_site
+    - stage
+  color_data_name: color.pkl
+  sample_list_name: sample_list.pkl
+  save_path: /raid/lhs/biobank/RESULT/
+  bokeh_params:
+    angle: 45.0
+    fill_alpha: 0.2
+    plot_height: 1000
+    plot_width: 1000
+    point_size: 5
+    title: t-SNE
+  tsne_params:
+    n_components: 2
+    n_iter: 3000
+    random_state: 42
+  rf_params:
+    test_size: 0.5
+    random_state: 42
+    n_estimators: 100
