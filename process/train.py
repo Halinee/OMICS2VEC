@@ -31,52 +31,49 @@ class Train(Task):
         label_df = pd.read_feather(
             osp.join(processor.save_file_path, self.config["label_data_name"])
         )
-        output_dim = [
-            len(np.unique(label_df[label].values))
-            for label in self.params["model_params"]["predict_label"]
-        ]
+        output_dim = (
+            [
+                len(np.unique(label_df[label].values))
+                for label in self.config["label_type"]
+            ]
+            if self.config["label_type"] is not None
+            else []
+        )
         self.model_params = self.update_configuration(
             self.params["model_params"],
             [
+                "data_type",
+                "origin_dim",
                 "label_type",
                 "output_dim",
-                "gene_fpkm_dim",
-                "isoform_fpkm_dim",
-                "mutation_dim",
             ],
             [
-                self.config["label_type"],
+                self.config["data_type"],
+                processor.origin_dim,
+                self.config["label_type"]
+                if self.config["label_type"] is not None
+                else [],
                 output_dim,
-                processor.gene_fpkm_dim,
-                processor.isoform_fpkm_dim,
-                processor.mutation_dim,
             ],
         )
         self.data_params = self.update_configuration(
             self.params["data_params"],
-            ["processed_data_path", "processed_label_name"],
-            [processor.save_file_path, self.config["label_data_name"]],
-        )
-
-    def set_model_and_data_params(
-        self, data_type: str
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        model_params = self.update_configuration(
-            self.model_params,
-            ["origin_dim", "g_loss"],
             [
-                self.model_params[data_type + "_dim"],
-                self.model_params[data_type + "_loss"],
+                "processed_data_path",
+                "processed_data_name",
+                "processed_label_name",
+                "processed_label_list",
+            ],
+            [
+                processor.save_file_path,
+                self.config["data_type"],
+                self.config["label_data_name"],
+                self.config["label_type"],
             ],
         )
-        data_params = self.update_configuration(
-            self.data_params, "processed_data_name", data_type + ".ftr"
-        )
-
-        return model_params, data_params
 
     def load_model_and_data(
-        self, data_type: str, model_params: Dict[str, Any], data_params: Dict[str, Any]
+        self, model_params: Dict[str, Any], data_params: Dict[str, Any]
     ) -> Tuple[pl.LightningModule, pl.LightningDataModule]:
         model = O2VModule(**model_params)
         if self.params["fine_tuning"] is not None:
@@ -85,21 +82,21 @@ class Train(Task):
                 osp.join(
                     self.params["save_path"],
                     self.params["fine_tuning"],
-                    data_type + ".ckpt",
+                    self.config["experiment"] + ".ckpt",
                 )
             )
         data = O2VDataModule(**data_params)
 
         return model, data
 
-    def load_trainer(self, data_type: str) -> pl.Trainer:
+    def load_trainer(self) -> pl.Trainer:
         # Set wandb
         pl.seed_everything(self.project_params["seed"])
         trainer = pl.Trainer(
             logger=WandbLogger(
                 entity=self.project_params["entity"],
                 project=self.project_params["project"],
-                name=self.config["experiment"] + "_" + data_type,
+                name=self.config["experiment"],
                 log_model=True,
             ),
             gpus=self.project_params["gpus"],
@@ -115,7 +112,7 @@ class Train(Task):
                 ),
                 ModelCheckpoint(
                     dirpath=self.save_file_path,
-                    filename=data_type,
+                    filename=self.config["experiment"],
                     monitor=self.project_params["monitor"],
                     save_top_k=1,
                     mode="min",
@@ -127,10 +124,10 @@ class Train(Task):
         return trainer
 
     def run_task(self) -> None:
-        for t in self.config["data_type"]:
-            if not check_file(osp.join(self.save_file_path, t + ".ckpt")):
-                model_params, data_params = self.set_model_and_data_params(t)
-                net, data = self.load_model_and_data(t, model_params, data_params)
-                trainer = self.load_trainer(t)
-                trainer.fit(net, data)
-                wandb.finish()
+        if not check_file(
+            osp.join(self.save_file_path, self.config["experiment"] + ".ckpt")
+        ):
+            net, data = self.load_model_and_data(self.model_params, self.data_params)
+            trainer = self.load_trainer()
+            trainer.fit(net, data)
+            wandb.finish()

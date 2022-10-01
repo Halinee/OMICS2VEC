@@ -1,6 +1,6 @@
 import os
 import os.path as osp
-from typing import Tuple
+from typing import Any, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -12,46 +12,51 @@ class OmicsDataset(Dataset):
     def __init__(
         self,
         processed_data_path: str,
-        processed_data_name: str,
+        processed_data_list: List[str],
         processed_label_name: str,
+        processed_label_list: List[str],
     ):
         super(OmicsDataset, self).__init__()
         # Make directory
         if not osp.exists(processed_data_path):
             os.mkdir(processed_data_path)
-        # Load data
-        x_path = osp.join(processed_data_path, processed_data_name)
-        x = pd.read_feather(x_path)
-        x.set_index(x.columns[0], inplace=True)
-        self.data = np.array(x)
-        y_path = osp.join(processed_data_path, processed_label_name)
-        y = pd.read_feather(y_path)
-        y.set_index(y.columns[0], inplace=True)
-        y = y.loc[x.index]
-        self.cancer_type = y["cancer_type"].values
-        self.primary_site = y["primary_site"].values
-        self.sample_type = y["sample_type"].values
-        self.stage = y["stage"].values
-        self.tumor_event = y["tumor_event"].values
+        # Load omics data
+        self.x = {}
+        for data_type in processed_data_list:
+            self.x[data_type] = th.as_tensor(
+                self.load_data(processed_data_path, data_type + ".ftr").values,
+                dtype=th.float32,
+            )
+        self.label = self.load_data(processed_data_path, processed_label_name)
+        # Load label data
+        self.y = {}
+        for label_type in processed_label_list:
+            self.y[label_type] = self.label[label_type].values
+        # Load masking data
+        processed_masking_list = ["masking_" + data for data in processed_data_list]
+        self.masking = {}
+        for data_type in processed_masking_list:
+            self.masking[data_type] = self.label[data_type].values
 
-    def __getitem__(
-        self, idx: int
-    ) -> Tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
+    @staticmethod
+    def load_data(path: str, name: str) -> pd.DataFrame:
+        data = pd.read_feather(osp.join(path, name))
+        data.set_index(data.columns[0], inplace=True)
+        return data
+
+    def __getitem__(self, idx: int) -> Tuple[Tuple[Any], np.ndarray, np.ndarray]:
         """
-        cancer_type: 0
-        primary_site: 1
-        sample_type: 2
-        stage: 3
-        tumor_event: 4
+        data_type_index: Reference data_type in yaml file
+        label_type_index: Reference label_type in yaml file
         """
+        x = tuple(data[idx] for data in self.x.values())
+        y = np.array([data[idx] for data in self.y.values()])
+        masking = np.array([data[idx] for data in self.masking.values()])
         return (
-            th.as_tensor(self.data[idx], dtype=th.float32),
-            self.cancer_type[idx],
-            self.primary_site[idx],
-            self.sample_type[idx],
-            self.stage[idx],
-            self.tumor_event[idx],
+            x,
+            y,
+            masking,
         )
 
     def __len__(self) -> int:
-        return len(self.data)
+        return len(self.label)

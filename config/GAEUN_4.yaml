@@ -1,20 +1,23 @@
-experiment: O2V_CT
+experiment: GAEUN_4
 data_type:
   - gene_fpkm
   - isoform_fpkm
   - mutation
+  - methylation
 label_type:
   - cancer_type
   - primary_site
   - sample_type
-  - stage
-  - tumor_event
-raw_data_path: /raid/lhs/biobank/DATA/OMICS2VEC/raw/
+raw_data_path: /raid/lhs/biobank/DATA/AHLIN/raw/
 clinical_data_name: clinical.ftr
 label_data_name: label.ftr
+decode_data_name: decode.pkl
+index_data_name: data_idx.pkl
+color_data_name: color.pkl
 preprocess_params:
-  save_path: /raid/lhs/biobank/DATA/OMICS2VEC/processed/
+  save_path: /raid/lhs/biobank/DATA/AHLIN/processed/
   scale_type: zeroone
+  virtual_condition: true
 training_params:
   save_path: /raid/lhs/biobank/CKPT/
   fine_tuning: null
@@ -26,8 +29,8 @@ training_params:
     logging_interval: step
     max_epochs: 500
     monitor: null
-    patience: 100
-    project: OMICS2VEC
+    patience: 200
+    project: GAEUN
     save_model_name: null
     seed: 42
   data_params:
@@ -37,33 +40,27 @@ training_params:
     num_workers: 4
     pin_memory: true
     processed_data_path: null
-    processed_data_name: null
+    processed_data_list: null
+    processed_label_name: null
+    processed_label_list: null
     seed: 42
   model_params:
-    predict_label:
-      - cancer_type
-      - tumor_event
+    origin_dim: null
+    predict_label: null
     g_act: lrelu
     p_act: lrelu
-    origin_dim: null
-    gene_fpkm_dim: null
-    isoform_fpkm_dim: null
-    mutation_dim: null
     g_hidden_dim:
       - 1000
       - 500
       - 200
-    p_hidden_dim:
       - 100
+    p_hidden_dim:
       - 100
     kl_coef: 0.00025
     latent_dim: 100
     output_dim: null
-    g_loss: null
+    g_loss: mae
     p_loss: focal
-    gene_fpkm_loss: mae
-    isoform_fpkm_loss: mae
-    mutation_loss: bce
     g_lr: 0.0005
     p_lr: 0.0005
     g_opt: adabelief
@@ -71,14 +68,7 @@ training_params:
 embedding_params:
   save_path: /raid/lhs/biobank/EMBED/
 analysis_params:
-  analysis_list:
-    - sample_type
-    - cancer_type
-    - tumor_event
-    - primary_site
-    - stage
-  color_data_name: color.pkl
-  sample_list_name: sample_list.pkl
+  random_state: 42
   save_path: /raid/lhs/biobank/RESULT/
   bokeh_params:
     angle: 45.0
@@ -90,8 +80,7 @@ analysis_params:
   tsne_params:
     n_components: 2
     n_iter: 3000
-    random_state: 42
-  rf_params:
-    test_size: 0.5
-    random_state: 42
+  random_forest_params:
+    k_fold: 5
     n_estimators: 100
+    class_weight: balanced

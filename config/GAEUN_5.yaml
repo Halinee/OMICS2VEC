@@ -1,0 +1,85 @@
+experiment: GAEUN_5
+data_type:
+  - gene_fpkm
+  - isoform_fpkm
+  - methylation
+label_type:
+  - cancer_type
+  - primary_site
+  - sample_type
+raw_data_path: /raid/lhs/biobank/DATA/AHLIN/raw/
+clinical_data_name: clinical.ftr
+label_data_name: label.ftr
+decode_data_name: decode.pkl
+index_data_name: data_idx.pkl
+color_data_name: color.pkl
+preprocess_params:
+  save_path: /raid/lhs/biobank/DATA/AHLIN/processed/
+  scale_type: zeroone
+  virtual_condition: true
+training_params:
+  save_path: /raid/lhs/biobank/CKPT/
+  fine_tuning: null
+  project_params:
+    strategy: ddp
+    clip_norm: 50.0
+    entity: hyeonsu
+    gpus: 1
+    logging_interval: step
+    max_epochs: 500
+    monitor: null
+    patience: 200
+    project: GAEUN
+    save_model_name: null
+    seed: 42
+  data_params:
+    batch_size: 32
+    drop_last: false
+    test_size: 0.2
+    num_workers: 4
+    pin_memory: true
+    processed_data_path: null
+    processed_data_list: null
+    processed_label_name: null
+    processed_label_list: null
+    seed: 42
+  model_params:
+    origin_dim: null
+    predict_label: null
+    g_act: lrelu
+    p_act: lrelu
+    g_hidden_dim:
+      - 1000
+      - 500
+      - 200
+      - 100
+    p_hidden_dim:
+      - 100
+    kl_coef: 0.00025
+    latent_dim: 100
+    output_dim: null
+    g_loss: mae
+    p_loss: focal
+    g_lr: 0.0005
+    p_lr: 0.0005
+    g_opt: adabelief
+    p_opt: adabelief
+embedding_params:
+  save_path: /raid/lhs/biobank/EMBED/
+analysis_params:
+  random_state: 42
+  save_path: /raid/lhs/biobank/RESULT/
+  bokeh_params:
+    angle: 45.0
+    fill_alpha: 0.2
+    plot_height: 1000
+    plot_width: 1000
+    point_size: 5
+    title: t-SNE
+  tsne_params:
+    n_components: 2
+    n_iter: 3000
+  random_forest_params:
+    k_fold: 5
+    n_estimators: 100
+    class_weight: balanced

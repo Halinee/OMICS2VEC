@@ -2,18 +2,19 @@ from typing import Any, Dict, List, Tuple, Union
 
 import pytorch_lightning as pl
 import torch as th
+from torch.nn import Module, ModuleDict
 import torch.distributions as dist
 
-from .layers import VAE, MLP
+from .layers import GAE, MLP
 from .function import LOSS_FN_FACTORY, OPTIMIZER_FACTORY
 
 
 class O2VModule(pl.LightningModule):
     def __init__(
         self,
+        data_type: List[str],
         label_type: List[str],
-        predict_label: List[str],
-        origin_dim: int = 100,
+        origin_dim: Dict[str, int] = None,
         g_hidden_dim: List[int] = None,
         p_hidden_dim: List[int] = None,
         latent_dim: int = 100,
@@ -39,72 +40,109 @@ class O2VModule(pl.LightningModule):
             g_hidden_dim = [1024, 512, 256, 128]
         if p_hidden_dim is None:
             p_hidden_dim = [100, 100]
-        g_output_act = "sigmoid" if g_loss == "bce" else g_act
-        self.label_type = label_type
-        self.predict_label = predict_label
-        self.g_model = VAE(origin_dim, g_hidden_dim, latent_dim, g_act, g_output_act)
-        self.p_model = {
-            label: MLP(latent_dim, p_hidden_dim, output_dim[idx], p_act)
-            for idx, label in enumerate(predict_label)
-        }
+
+        self.g_model = GAE(
+            origin_dim=origin_dim,
+            hidden_dim=g_hidden_dim,
+            latent_dim=latent_dim,
+            activation=g_act,
+        )
+        self.p_model = ModuleDict(
+            {
+                label: MLP(
+                    input_dim=latent_dim,
+                    hidden_dim=p_hidden_dim,
+                    output_dim=output_dim[idx],
+                    activation=p_act,
+                )
+                for idx, label in enumerate(label_type)
+            }
+        )
 
     def forward(
-        self, x: th.Tensor
-    ) -> Tuple[th.Tensor, dist.Normal, dist.Normal, Union[float, th.Tensor]]:
+        self, x: Tuple[Any]
+    ) -> Tuple[Dict[str, th.Tensor], dist.Normal, dist.Normal]:
         return self.g_model(x)
 
     def generation_step(
-        self, x: th.Tensor
+        self, x: Tuple[Any], masking: th.Tensor
     ) -> Tuple[th.Tensor, Dict[str, Union[th.Tensor, float]]]:
-        x_hat, p, q, z = self(x)
-        recon_loss = LOSS_FN_FACTORY[self.hparams.g_loss](x_hat, x)
-        kl_loss = th.mean(dist.kl_divergence(q, p)) * float(self.hparams.kl_coef)
-        loss = kl_loss + recon_loss
-
-        logs = {
-            "recon_loss": recon_loss,
-            "kl_loss": kl_loss,
-            f"g_loss({self.hparams.g_loss})": loss,
+        mu, logvar = self(x)
+        p, q, z = self.g_model.sample(mu, logvar)
+        x_hat = {k: v(z) for k, v in self.g_model.decoder.items()}
+        # Only reality data is applied to the reconstruction loss calculation
+        recon_loss = {
+            data: LOSS_FN_FACTORY[self.hparams.g_loss](
+                x_hat[data][masking[:, self.hparams.data_type.index(data)] == 1],
+                x[self.hparams.data_type.index(data)][
+                    masking[:, self.hparams.data_type.index(data)] == 1
+                ],
+            )
+            for data in self.hparams.data_type
         }
+        kl_loss = th.mean(dist.kl_divergence(q, p)) * float(self.hparams.kl_coef)
+        loss = kl_loss + sum(list(recon_loss.values()))
+        logs = {
+            f"{data}_recon_loss({self.hparams.g_loss})": recon_loss[data]
+            for data in self.hparams.data_type
+        }
+        logs.update(
+            {
+                "kl_loss": kl_loss,
+                f"g_loss({self.hparams.g_loss})": loss,
+            }
+        )
         return loss, logs
 
     def prediction_step(
-        self, label: str, m: MLP, x: th.Tensor, y: th.Tensor
+        self,
+        label: str,
+        m: Module,
+        x: Tuple[Any],
+        y: th.Tensor,
     ) -> Tuple[th.Tensor, Dict[str, Union[th.Tensor, float]]]:
-        z = self.g_model.encode_from_omics(x)
+        mu, logvar = self(x)
+        p, q, z = self.g_model.sample(mu, logvar)
         y_hat = m(z)
         loss = LOSS_FN_FACTORY[self.hparams.p_loss](y_hat, y)
 
         logs = {f"{label}_p_loss({self.hparams.p_loss})": loss}
         return loss, logs
 
-    def on_fit_start(self) -> None:
-        for m in self.p_model.values():
-            m.to(self.device)
+    def sharing_step(
+        self, data: Tuple[Any], label: th.Tensor, masking: th.Tensor
+    ) -> Tuple[th.Tensor, Dict[str, Union[th.Tensor, float]]]:
+        g_loss, logs = self.generation_step(data, masking)
+        p_losses = 0.0
+        for k, v in self.p_model.items():
+            y = label[:, self.hparams.label_type.index(k)]
+            p_loss, _ = self.prediction_step(k, v, data, y)
+            p_losses += p_loss
+        loss = g_loss + p_losses
+        logs["gae_loss"] = loss
+        logs[f"p_loss({self.hparams.p_loss})"] = p_losses
+
+        return loss, logs
 
     def training_step(
         self,
-        batch: Tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor],
+        batch: Tuple[Tuple[Any], th.Tensor, th.Tensor],
         batch_idx: int,
-        optimizer_idx: int,
+        optimizer_idx: int = -1,
     ) -> th.Tensor:
-        x = batch[0]
-        y = batch[1:]
-        if optimizer_idx == 0:
-            g_loss, logs = self.generation_step(x)
-            p_losses = 0.0
-            for k, v in self.p_model.items():
-                p_loss, _ = self.prediction_step(k, v, x, y[self.label_type.index(k)])
-                p_losses += p_loss
-            loss = g_loss + p_losses
-            logs[f"g_loss({self.hparams.g_loss})"] = loss
-            logs[f"p_loss({self.hparams.p_loss})"] = p_losses
+        data, label, masking = batch
+        # If there is no predictor, only generator(GAE) is trained.
+        if len(self.hparams.label_type) == 0:
+            loss, logs = self.generation_step(data, masking)
+        # Multi semi-supervised learning - Generator(GAE) training only
+        elif optimizer_idx == 0:
+            loss, logs = self.sharing_step(data, label, masking)
+        # Predictor training only
         else:
+            current_label = self.hparams.label_type[optimizer_idx - 1]
+            y = label[:, self.hparams.label_type.index(current_label)]
             loss, logs = self.prediction_step(
-                self.predict_label[optimizer_idx - 1],
-                self.p_model[self.predict_label[optimizer_idx - 1]],
-                x,
-                y[self.label_type.index(self.predict_label[optimizer_idx - 1])],
+                current_label, self.p_model[current_label], data, y
             )
 
         self.log_dict({f"train_{k}": v for k, v in logs.items()})
@@ -113,20 +151,11 @@ class O2VModule(pl.LightningModule):
 
     def validation_step(
         self,
-        batch: Tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor, th.Tensor],
+        batch: Tuple[Tuple[Any], th.Tensor, th.Tensor],
         batch_idx: int,
-    ) -> Dict[str, th.Tensor]:
-        x = batch[0]
-        y = batch[1:]
-        _, g_logs = self.generation_step(x)
-        p_logs = {}
-        p_losses = 0.0
-        for k, v in self.p_model.items():
-            p_loss, p_log = self.prediction_step(k, v, x, y[self.label_type.index(k)])
-            p_losses += p_loss
-            p_logs.update(p_log)
-        p_logs[f"p_loss({self.hparams.p_loss})"] = p_losses
-        logs = dict(g_logs, **p_logs)
+    ) -> Dict[str, Union[th.Tensor, float]]:
+        data, label, masking = batch
+        loss, logs = self.sharing_step(data, label, masking)
 
         return logs
 
@@ -145,6 +174,7 @@ class O2VModule(pl.LightningModule):
         self.log_dict({f"val_{k}": v for k, v in logs.items()})
 
     def configure_optimizers(self) -> Any:
+        # Optimizer
         g_opt = OPTIMIZER_FACTORY[self.hparams.g_opt](
             self.g_model.parameters(),
             lr=float(self.hparams.g_lr),
@@ -158,7 +188,8 @@ class O2VModule(pl.LightningModule):
                 weight_decay=self.hparams.p_weight_decay,
                 eps=self.hparams.p_eps,
             )
-            for label in self.predict_label
+            for label in self.hparams.label_type
         ]
         opts = [g_opt] + p_opt
+
         return opts, []

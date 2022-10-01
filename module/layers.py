@@ -1,4 +1,4 @@
-from typing import List, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
 
 import numpy as np
 import torch as th
@@ -13,11 +13,11 @@ class Encoder(nn.Sequential):
         self,
         origin_dim: int = 128,
         hidden_dim: List[int] = None,
-        base_act: str = "relu",
+        activation: str = "relu",
     ):
         if hidden_dim is None:
             hidden_dim = [1024, 512, 256, 128]
-        act_fn = ACTIVATION_FN_FACTORY[base_act]
+        act_fn = ACTIVATION_FN_FACTORY[activation]
         layers = []
 
         for idx, dim in enumerate(hidden_dim):
@@ -45,12 +45,11 @@ class Decoder(nn.Sequential):
         latent_dim: int = 256,
         hidden_dim: List[int] = None,
         origin_dim: int = 128,
-        base_act: str = "relu",
-        output_act: str = "sigmoid",
+        activation: str = "relu",
     ):
         if hidden_dim is None:
             hidden_dim = [1024, 512, 256, 128]
-        act_fn = ACTIVATION_FN_FACTORY[base_act]
+        act_fn = ACTIVATION_FN_FACTORY[activation]
         layers = []
 
         for idx, dim in enumerate(hidden_dim):
@@ -73,47 +72,68 @@ class Decoder(nn.Sequential):
             [
                 nn.Linear(hidden_dim[-1], origin_dim),
                 nn.LayerNorm(origin_dim),
-                ACTIVATION_FN_FACTORY[output_act],
+                act_fn,
             ]
         )
         super(Decoder, self).__init__(*layers)
 
 
-class VAE(nn.Module):
+class GAE(nn.Module):
     def __init__(
         self,
-        origin_dim: int = 128,
+        origin_dim: Dict[str, int] = None,
         hidden_dim: List[int] = None,
-        latent_dim: int = 256,
-        base_act: str = "relu",
-        output_act: str = "sigmoid",
+        latent_dim: int = 100,
+        activation: str = "relu",
     ):
-        super(VAE, self).__init__()
+        super(GAE, self).__init__()
+        self.data_type = list(origin_dim.keys())
         if hidden_dim is None:
             hidden_dim = [1024, 512, 256, 128]
-        act_fn = ACTIVATION_FN_FACTORY[base_act]
+        concat_dim = hidden_dim[-1] * len(origin_dim.keys())
+        act_fn = ACTIVATION_FN_FACTORY[activation]
 
-        self.encoder = Encoder(origin_dim, hidden_dim, base_act)
-        self.decoder = Decoder(
-            latent_dim, hidden_dim[::-1], origin_dim, base_act, output_act
+        self.encoder = nn.ModuleDict(
+            {
+                data_type: Encoder(
+                    origin_dim=dim, hidden_dim=hidden_dim, activation=activation
+                )
+                for data_type, dim in origin_dim.items()
+            }
+        )
+        self.decoder = nn.ModuleDict(
+            {
+                data_type: Decoder(
+                    latent_dim=latent_dim,
+                    hidden_dim=hidden_dim,
+                    origin_dim=dim,
+                    activation=activation,
+                )
+                for data_type, dim in origin_dim.items()
+            }
+        )
+        self.concater = nn.Sequential(
+            nn.Linear(concat_dim, concat_dim), nn.LayerNorm(concat_dim), act_fn
         )
         self.mu = nn.Sequential(
-            nn.Linear(hidden_dim[-1], latent_dim), nn.LayerNorm(latent_dim), act_fn
+            nn.Linear(concat_dim, latent_dim), nn.LayerNorm(latent_dim), act_fn
         )
         self.logvar = nn.Sequential(
-            nn.Linear(hidden_dim[-1], latent_dim), nn.LayerNorm(latent_dim), act_fn
+            nn.Linear(concat_dim, latent_dim), nn.LayerNorm(latent_dim), act_fn
         )
 
-    def forward(
-        self, x: th.Tensor
-    ) -> Tuple[th.Tensor, dist.Normal, dist.Normal, Union[float, th.Tensor]]:
+    def forward(self, x: Tuple[Any]) -> Tuple[dist.Normal, dist.Normal]:
         # Encode data
-        x = self.encoder(x)
-        mu = self.mu(x)
-        logvar = self.logvar(x)
-        p, q, z = self.sample(mu, logvar)
-        # Decode data
-        return self.decoder(z), p, q, z
+        x = [
+            encoder(x[self.data_type.index(data)])
+            for data, encoder in self.encoder.items()
+        ]
+        c_x = th.cat(x, dim=-1)
+        c_x = self.concater(c_x)
+        mu = self.mu(c_x)
+        logvar = self.logvar(c_x)
+
+        return mu, logvar
 
     @staticmethod
     def sample(
@@ -127,39 +147,41 @@ class VAE(nn.Module):
         return p, q, z
 
     def encode_from_omics(
-        self, omics: Union[np.ndarray, th.Tensor]
+        self, multi_omics: Dict[str, Union[np.ndarray, th.Tensor]]
     ) -> Union[float, th.Tensor]:
-        x = th.as_tensor(omics, dtype=th.float32)
-        x = self.encoder(x)
-        mu = self.mu(x)
-        logvar = self.logvar(x)
-        _, _, z = self.sample(mu, logvar)
+        x = [encoder(multi_omics[data]) for data, encoder in self.encoder.items()]
+        c_x = th.cat(x, dim=-1)
+        c_x = self.concater(c_x)
+        mu = self.mu(c_x)
 
-        return z
+        return mu
 
 
-class MLP(nn.Sequential):
+class MLP(nn.Module):
     def __init__(
         self,
         input_dim: int = 100,
         hidden_dim: List[int] = None,
         output_dim: int = 33,
-        act: str = "relu",
+        activation: str = "relu",
     ):
         super(MLP, self).__init__()
         if hidden_dim is None:
             hidden_dim = [200, 100]
         dims = [input_dim] + hidden_dim + [output_dim]
-        act_fn = ACTIVATION_FN_FACTORY[act]
+        act_fn = ACTIVATION_FN_FACTORY[activation]
 
-        layers = []
+        layer_list = []
         for i in range(len(dims) - 2):
-            layers.extend(
+            layer_list.extend(
                 [
                     nn.Linear(dims[i], dims[i + 1]),
                     nn.LayerNorm(dims[i + 1]),
                     act_fn,
                 ]
             )
-        layers.append(nn.Linear(dims[-2], dims[-1]))
-        super(MLP, self).__init__(*layers)
+        layer_list.append(nn.Linear(dims[-2], dims[-1]))
+        self.model = nn.Sequential(*layer_list)
+
+    def forward(self, x: th.Tensor):
+        return self.model(x)

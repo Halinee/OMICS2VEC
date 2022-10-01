@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 import pytorch_lightning as pl
 from sklearn.model_selection import train_test_split
@@ -11,8 +11,9 @@ class O2VDataModule(pl.LightningDataModule):
     def __init__(
         self,
         processed_data_path: str,
-        processed_data_name: str,
+        processed_data_name: List[str],
         processed_label_name: str,
+        processed_label_list: List[str],
         batch_size: int = 32,
         test_size: float = 0.2,
         num_workers: int = 4,
@@ -32,17 +33,18 @@ class O2VDataModule(pl.LightningDataModule):
             processed_data_path,
             processed_data_name,
             processed_label_name,
+            processed_label_list,
         )
         self.train_idx = None
-        self.valid_idx = None
+        self.test_idx = None
 
     def setup(self, stage: Optional[str] = None) -> None:
-        self.train_idx, self.valid_idx = train_test_split(
+        self.train_idx, self.test_idx = train_test_split(
             range(len(self.dataset)), test_size=self.test_size, random_state=self.seed
         )
 
     def generate_dataloader(self, split: str, shuffle: bool) -> DataLoader:
-        splits = {"train": self.train_idx, "valid": self.valid_idx}
+        splits = {"train": self.train_idx, "test": self.test_idx}
         dataset = Subset(self.dataset, splits[split])
 
         return DataLoader(
@@ -57,4 +59,4 @@ class O2VDataModule(pl.LightningDataModule):
         return self.generate_dataloader(split="train", shuffle=True)
 
     def val_dataloader(self) -> DataLoader:
-        return self.generate_dataloader(split="valid", shuffle=False)
+        return self.generate_dataloader(split="test", shuffle=False)
