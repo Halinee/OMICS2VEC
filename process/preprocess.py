@@ -1,16 +1,12 @@
 import itertools
 import os.path as osp
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple, Union
 
 import pandas as pd
 from pylab import *
-from sklearn.preprocessing import (
-    LabelEncoder,
-    MinMaxScaler,
-    RobustScaler,
-    StandardScaler,
-)
+from sklearn.preprocessing import LabelEncoder
 
+from module.util import scaling
 from .task import Task
 
 
@@ -25,29 +21,8 @@ class Preprocess(Task):
         )
         self.origin_dim = {}
 
-    def scaling(self, omics: pd.DataFrame) -> pd.DataFrame:
-        if self.scale_type is not None:
-            if self.scale_type == "zscore":
-                scaler = StandardScaler()
-            elif self.scale_type == "zeroone":
-                scaler = MinMaxScaler()
-            elif self.scale_type == "robust":
-                scaler = RobustScaler()
-            else:
-                scaler = None
-            scaled_omics = scaler.fit_transform(omics)
-            scaled_omics = pd.DataFrame(
-                scaled_omics,
-                columns=omics.columns,
-                index=omics.index,
-            )
-        else:
-            scaled_omics = omics
-
-        return scaled_omics
-
     def generate_scaled_data(self) -> Dict[str, pd.DataFrame]:
-        return {k: self.scaling(v) for k, v in self.data_dict.items()}
+        return {k: scaling(self.scale_type, v) for k, v in self.data_dict.items()}
 
     def generate_virtual_data(
         self, combine_data_idx: Set[str]
@@ -61,7 +36,9 @@ class Preprocess(Task):
             for k, v in self.data_dict.items()
         }
 
-    def generate_label_and_decode(self, data_idx: List[str]) -> pd.DataFrame:
+    def generate_label_and_decode(
+        self, data_idx: List[str]
+    ) -> Tuple[pd.DataFram, Dict[str, List[str]]]:
         clinical = self.clinical.loc[data_idx]
         label_df = pd.DataFrame(index=clinical.index)
         decode = {}
@@ -70,15 +47,12 @@ class Preprocess(Task):
         for label in self.config["label_type"]:
             label_df[label] = encoder.fit_transform(clinical[label].values)
             decode[label] = encoder.classes_
-        # Save decode data
-        print(f"Saving processed decode data...\n")
-        self.save_pickle(decode, self.save_file_path, self.config["decode_data_name"])
 
-        return label_df
+        return label_df, decode
 
     def generate_virtual_info(
         self, data_idx: List[str], masking_data: Dict[str, pd.DataFrame]
-    ) -> None:
+    ) -> Tuple[Dict[str, Dict[str, str]], pd.DataFrame]:
         # Add data authenticity information to existing color data for visualization
         color = self.load_pickle(
             self.config["raw_data_path"], self.config["color_data_name"]
@@ -97,8 +71,7 @@ class Preprocess(Task):
         color["authenticity"] = {
             case: color for case, color in zip(masking_case, masking_color)
         }
-        print("Saving processed color data...\n")
-        self.save_pickle(color, self.save_file_path, self.config["color_data_name"])
+
         # Add data authenticity information to existing clinical data for set label
         clinical = self.clinical.loc[data_idx]
         masking_df = pd.concat(masking_data.values(), axis=1)
@@ -110,10 +83,8 @@ class Preprocess(Task):
                 label += "1" if v == 1 else "0"
             masking_label.append(label)
         clinical["authenticity"] = masking_label
-        print("Saving processed clinical data...\n")
-        self.save_feather(
-            clinical, self.save_file_path, self.config["clinical_data_name"]
-        )
+
+        return color, clinical
 
     def generate_concat_data(self) -> None:
         # Generate reality scaled data
@@ -146,19 +117,28 @@ class Preprocess(Task):
                 for data in self.config["data_type"]
             }
         combine_data_idx = list(combine_data_idx)
+        combine_data = {k: v.loc[combine_data_idx] for k, v in combine_data.items()}
+        masking_data = {k: v.loc[combine_data_idx] for k, v in masking_data.items()}
+        label, decode = self.generate_label_and_decode(combine_data_idx)
+        label = pd.concat([label, pd.concat(masking_data.values(), axis=1)], axis=1)
+        color, clinical = self.generate_virtual_info(
+            data_idx=combine_data_idx, masking_data=masking_data
+        )
+
         print("Saving processed index data...\n")
         self.save_pickle(
             combine_data_idx, self.save_file_path, self.config["index_data_name"]
         )
-        combine_data = {k: v.loc[combine_data_idx] for k, v in combine_data.items()}
-        masking_data = {k: v.loc[combine_data_idx] for k, v in masking_data.items()}
-        label = self.generate_label_and_decode(combine_data_idx)
-        label = pd.concat([label, pd.concat(masking_data.values(), axis=1)], axis=1)
-        print("Saving virtual sample identification information...\n")
-        self.generate_virtual_info(data_idx=combine_data_idx, masking_data=masking_data)
+        print("Saving processed color data...\n")
+        self.save_pickle(color, self.save_file_path, self.config["color_data_name"])
+        print("Saving processed clinical data...\n")
+        self.save_feather(
+            clinical, self.save_file_path, self.config["clinical_data_name"]
+        )
         print("Saving processed label data...\n")
         self.save_feather(label, self.save_file_path, self.config["label_data_name"])
-
+        print(f"Saving processed decode data...\n")
+        self.save_pickle(decode, self.save_file_path, self.config["decode_data_name"])
         for data in self.config["data_type"]:
             print(f"Saving processed {data} data...\n")
             self.save_feather(combine_data[data], self.save_file_path, data + ".ftr")
@@ -171,19 +151,15 @@ class Preprocess(Task):
             if not osp.exists(osp.join(self.save_file_path, data + ".ftr")):
                 print(f"Processed {data} data file does not exist!\n")
                 check_file = False
-        # Check label & decode data
-        print("Check the existence of the label data file...")
-        if not osp.exists(
-            osp.join(self.save_file_path, self.config["label_data_name"])
-        ):
-            print(f"Processed label data file does not exist!\n")
-            check_file = False
-        print("Check the existence of the decode data file...")
-        if not osp.exists(
-            osp.join(self.save_file_path, self.config["decode_data_name"])
-        ):
-            print(f"Processed decode data file does not exist!\n")
-            check_file = False
+        # Check meta data
+        meta_file = ["index", "color", "clinical", "label", "decode"]
+        for file in meta_file:
+            print(f"Check the existence of the {file} data file...")
+            if not osp.exists(
+                osp.join(self.save_file_path, self.config[f"{file}_data_name"])
+            ):
+                print(f"Processed {file} data file does not exist!\n")
+                check_file = False
 
         return check_file
 

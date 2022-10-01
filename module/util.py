@@ -3,6 +3,11 @@ import os.path as osp
 from typing import Dict, List, Tuple
 
 import pandas as pd
+from sklearn.preprocessing import (
+    MinMaxScaler,
+    RobustScaler,
+    StandardScaler,
+)
 
 
 def check_directory(default_path: str, check_path: str) -> str:
@@ -18,6 +23,30 @@ def check_file(file_path: str) -> bool:
         return True
     else:
         return False
+
+
+def scaling(scale_type: str, omics: pd.DataFrame) -> pd.DataFrame:
+    if scale_type is not None:
+        match scale_type:
+            case "zscore":
+                scaler = StandardScaler()
+            case "zeroone":
+                scaler = MinMaxScaler()
+            case "robust":
+                scaler = RobustScaler()
+            case _:
+                scaler = None
+
+        scaled_omics = scaler.fit_transform(omics)
+        scaled_omics = pd.DataFrame(
+            scaled_omics,
+            columns=omics.columns,
+            index=omics.index,
+        )
+    else:
+        scaled_omics = omics
+
+    return scaled_omics
 
 
 def set_label(clinical: pd.DataFrame) -> Dict[str, List[str]]:
