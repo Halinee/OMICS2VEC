@@ -66,6 +66,9 @@ training_params:
     p_opt: adabelief
 embedding_params:
   save_path: /raid/lhs/biobank/EMBED/
+  hidden_index_data_name: "hidden_idx.pkl"
+  hidden_data_type: "methylation"
+  hidden_rate: 0.5
 analysis_params:
   random_state: 42
   save_path: /raid/lhs/biobank/RESULT/

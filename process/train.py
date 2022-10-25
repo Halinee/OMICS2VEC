@@ -59,16 +59,20 @@ class Train(Task):
         self.data_params = self.update_configuration(
             self.params["data_params"],
             [
+                "raw_data_path",
                 "processed_data_path",
                 "processed_data_name",
                 "processed_label_name",
                 "processed_label_list",
+                "test_index_data_name",
             ],
             [
+                self.config["raw_data_path"],
                 processor.save_file_path,
                 self.config["data_type"],
                 self.config["label_data_name"],
                 self.config["label_type"],
+                self.config["test_index_data_name"],
             ],
         )
 

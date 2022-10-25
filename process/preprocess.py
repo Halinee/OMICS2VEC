@@ -1,6 +1,6 @@
 import itertools
 import os.path as osp
-from typing import Dict, List, Set, Tuple, Union
+from typing import Dict, List, Set, Tuple
 
 import pandas as pd
 from pylab import *
@@ -38,7 +38,7 @@ class Preprocess(Task):
 
     def generate_label_and_decode(
         self, data_idx: List[str]
-    ) -> Tuple[pd.DataFram, Dict[str, List[str]]]:
+    ) -> Tuple[pd.DataFrame, Dict[str, List[str]]]:
         clinical = self.clinical.loc[data_idx]
         label_df = pd.DataFrame(index=clinical.index)
         decode = {}

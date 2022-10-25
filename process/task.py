@@ -12,7 +12,6 @@ class Task:
         super(Task, self).__init__()
         self.task_name = task_name
         self.config = config
-        self.valid_file_num = len(self.config["data_type"])
         self.params = self.set_configuration()
         self.save_file_path = osp.join(
             self.params["save_path"], self.config["experiment"]
@@ -48,15 +47,10 @@ class Task:
         print("Set", self.task_name, "task parameters...")
         match self.task_name:
             case "Preprocess":
-                # Consider the label and decode file
-                self.valid_file_num += 3
                 return self.config["preprocess_params"]
             case "Train":
-                self.valid_file_num = 1
                 return self.config["training_params"]
             case "Embed":
-                # Consider the concat file
-                self.valid_file_num = 1
                 return self.config["embedding_params"]
             case "Analysis":
                 return self.config["analysis_params"]
@@ -92,13 +86,12 @@ class Task:
 
     def check_task(self) -> bool:
         print("Check the existence of the file...")
-        if len(os.listdir(self.save_file_path)) == self.valid_file_num:
+        if len(os.listdir(self.save_file_path)) == 1:
             print(self.task_name, "file already exist:", self.save_file_path)
             print("Proceed to the next step...")
             return True
         else:
-            non_exist_num = self.valid_file_num - len(os.listdir(self.save_file_path))
-            print(self.task_name, f"{non_exist_num} file does not exist!")
+            print(self.task_name, "file does not exist!")
             print("Start generating data that doesn't exist...\n")
             return False
 

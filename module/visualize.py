@@ -19,10 +19,11 @@ def generate_tsne(
     color: Dict[str, List[str]],
     legend: Dict[str, List[str]],
     params: Dict[str, Any],
+    data_type: str,
     save_path: str,
 ) -> None:
     for color_key in color.keys():
-        save_file_path = osp.join(save_path, color_key + ".html")
+        save_file_path = osp.join(save_path, f"{data_type}_{color_key}.html")
         if check_file(save_file_path):
             continue
         source = ColumnDataSource(
@@ -49,7 +50,7 @@ def generate_tsne(
             plot_width=params["plot_width"],
             plot_height=params["plot_height"],
             tools=["reset,box_zoom,wheel_zoom,zoom_in,zoom_out,pan", hover],
-            title=color_key + " " + params["title"],
+            title=f"{data_type} {color_key} t-SNE result",
         )
         interactive_map.circle(
             "x",
@@ -70,10 +71,13 @@ def generate_confusion_matrix(
     result_dict: Dict[str, Dict[str, Dict[str, List[Union[int, float]]]]],
     score_dict: Dict[str, Dict[str, float]],
     decode_dict: Dict[str, List[str]],
+    data_type: str,
     save_path: str,
 ) -> None:
     for label, k_fold in result_dict.items():
-        save_file_path = osp.join(save_path, f"{label}_confusion_matrix.png")
+        save_file_path = osp.join(
+            save_path, f"{data_type}_{label}_confusion_matrix.png"
+        )
         if check_file(save_file_path):
             continue
         cm = None
@@ -99,7 +103,7 @@ def generate_confusion_matrix(
         ax.set_yticklabels(ax.get_ymajorticklabels(), fontsize=20)
 
         plt.title(
-            f"{label.upper()} F1 score(weighted): {score_dict[label]}",
+            f"{data_type} {label} F1 score(weighted): {score_dict[label]}",
             fontsize=36,
         )
         plt.savefig(save_file_path)
@@ -107,9 +111,9 @@ def generate_confusion_matrix(
 
 
 def generate_performance_data_frame(
-    k_fold: int, score_dict: Dict[str, Dict[str, float]], save_path: str
+    k_fold: int, score_dict: Dict[str, Dict[str, float]], data_type: str, save_path: str
 ):
-    save_file_path = osp.join(save_path, "K-fold_performance.csv")
+    save_file_path = osp.join(save_path, f"{data_type}_K-fold_performance.csv")
     index = []
     data = []
     for label, k_fold_data in score_dict.items():

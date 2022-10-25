@@ -26,7 +26,9 @@ class Analysis(Task):
     def __init__(self, processor: Embed, **kwargs):
         super(Analysis, self).__init__(**kwargs)
         self.embedding_params = processor.params
+        self.model_params = processor.model_params
         self.data_params = processor.data_params
+        self.model_checkpoint_path = processor.model_checkpoint_path
         with open(
             osp.join(
                 self.data_params["processed_data_path"], self.config["color_data_name"]
@@ -53,6 +55,11 @@ class Analysis(Task):
             "rb",
         ) as f:
             self.decode_dict = pkl.load(f)
+        with open(
+            osp.join(self.config["raw_data_path"], self.config["test_index_data_name"]),
+            "rb",
+        ) as f:
+            self.test_sample = pkl.load(f)
         self.clinical = self.load_feather(
             self.data_params["processed_data_path"], self.config["clinical_data_name"]
         ).loc[self.data_idx]
@@ -63,10 +70,10 @@ class Analysis(Task):
         self.tsne_params = self.params["tsne_params"]
         self.random_forest_params = self.params["random_forest_params"]
 
-    def load_embed(self) -> np.ndarray:
+    def load_embed(self, name: str) -> np.ndarray:
         embed = self.load_feather(
             osp.join(self.embedding_params["save_path"], self.config["experiment"]),
-            "embed.ftr",
+            name + ".ftr",
         ).to_numpy()
 
         return embed
@@ -96,27 +103,21 @@ class Analysis(Task):
             result_dict[label] = {}
             score_dict[label] = {}
             y = self.label[label].values
-            k_fold = StratifiedKFold(
-                n_splits=self.random_forest_params["k_fold"],
-                random_state=self.params["random_state"],
-                shuffle=True,
+            test_idx = [np.where(self.data_idx == i)[0][0] for i in self.test_sample]
+            train_idx = list(set(range(len(self.data_idx))) - set(test_idx))
+            x_train, x_test = embed[train_idx], embed[test_idx]
+            y_train, y_test = y[train_idx], y[test_idx]
+            model = RandomForestClassifier(
+                n_estimators=self.random_forest_params["n_estimators"],
+                class_weight=self.random_forest_params["class_weight"],
             )
-            for k_fold_idx, (train_idx, test_idx) in enumerate(k_fold.split(embed, y)):
-                x_train, x_test = embed[train_idx], embed[test_idx]
-                y_train, y_test = y[train_idx], y[test_idx]
-                model = RandomForestClassifier(
-                    n_estimators=self.random_forest_params["n_estimators"],
-                    class_weight=self.random_forest_params["class_weight"],
-                )
-                model.fit(x_train, y_train)
-                y_pred = model.predict(x_test)
-                result = {"true": y_test, "pred": y_pred}
-                result_dict[label][f"{k_fold_idx + 1}_fold"] = result
-                score = metrics.f1_score(y_test, y_pred, average="weighted")
-                print(
-                    f"{label.upper()} {k_fold_idx + 1}_fold prediction(weighted F1-score) result : {score}"
-                )
-                score_dict[label][f"{k_fold_idx + 1}_fold"] = score
+            model.fit(x_train, y_train)
+            y_pred = model.predict(x_test)
+            result = {"true": y_test, "pred": y_pred}
+            result_dict[label] = result
+            score = metrics.f1_score(y_test, y_pred, average="weighted")
+            print(f"{label.upper()} prediction(weighted F1-score) result : {score}")
+            score_dict[label] = score
 
         return result_dict, score_dict
 
@@ -127,29 +128,51 @@ class Analysis(Task):
         # Load label information
         label = set_label(self.clinical)
         color, legend = set_color_and_legend(self.color, label)
-        embed = self.load_embed()
+        data_dict = {
+            data: self.load_feather(
+                self.data_params["processed_data_path"], data + ".ftr"
+            ).to_numpy()
+            for data in self.config["data_type"]
+        }
+        reconstructed_data_dict = {
+            data
+            + "_recon": self.load_feather(
+                self.data_params["processed_data_path"], data + "_recon.ftr"
+            ).to_numpy()
+            for data in self.config["data_type"]
+        }
+        embed = self.load_embed(name="embed")
+        #        hidden_embed = self.load_embed(name="hidden_embed")
         # Generate t-SNE visualize result
         print("Generate t-SNE visualization result...")
-        tsne = self.load_tsne(embed)
-        generate_tsne(
-            tsne=tsne,
-            label=label,
-            color=color,
-            legend=legend,
-            params=self.bokeh_params,
-            save_path=self.save_file_path,
-        )
-        # Generate confusion matrix visualize result
-        result_dict, score_dict = self.load_prediction(embed)
-        print("Generate performance evaluation results...")
-        generate_performance_data_frame(
-            k_fold=self.random_forest_params["k_fold"],
-            score_dict=score_dict,
-            save_path=self.save_file_path,
-        )
-        generate_confusion_matrix(
-            result_dict=result_dict,
-            score_dict=score_dict,
-            decode_dict=self.decode_dict,
-            save_path=self.save_file_path,
-        )
+        #        analysis_dict = {"embedding": embed, "hidden_embedding": hidden_embed}
+        analysis_dict = {"embedding": embed}
+        analysis_dict.update(data_dict)
+        analysis_dict.update(reconstructed_data_dict)
+        for name, data in analysis_dict.items():
+            tsne = self.load_tsne(data)
+            generate_tsne(
+                tsne=tsne,
+                label=label,
+                color=color,
+                legend=legend,
+                params=self.bokeh_params,
+                data_type=name,
+                save_path=self.save_file_path,
+            )
+            # Generate confusion matrix visualize result
+            result_dict, score_dict = self.load_prediction(data)
+            print("Generate performance evaluation results...")
+            generate_performance_data_frame(
+                k_fold=self.random_forest_params["k_fold"],
+                score_dict=score_dict,
+                data_type=name,
+                save_path=self.save_file_path,
+            )
+            generate_confusion_matrix(
+                result_dict=result_dict,
+                score_dict=score_dict,
+                decode_dict=self.decode_dict,
+                data_type=name,
+                save_path=self.save_file_path,
+            )
