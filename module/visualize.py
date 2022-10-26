@@ -68,24 +68,20 @@ def generate_tsne(
 
 
 def generate_confusion_matrix(
-    result_dict: Dict[str, Dict[str, Dict[str, List[Union[int, float]]]]],
-    score_dict: Dict[str, Dict[str, float]],
+    result_dict: Dict[str, Dict[str, List[Union[int, float]]]],
+    score_dict: Dict[str, float],
     decode_dict: Dict[str, List[str]],
     data_type: str,
     save_path: str,
 ) -> None:
-    for label, k_fold in result_dict.items():
+    for label, data in result_dict.items():
         save_file_path = osp.join(
             save_path, f"{data_type}_{label}_confusion_matrix.png"
         )
         if check_file(save_file_path):
             continue
-        cm = None
-        for values in k_fold.values():
-            if cm is None:
-                cm = confusion_matrix(values["true"], values["pred"])
-            else:
-                cm += confusion_matrix(values["true"], values["pred"])
+
+        cm = confusion_matrix(data["true"], data["pred"])
         percent_of_cm = [i / sum(i) for i in cm]
         plt.figure(figsize=(50, 50))
         ax = sns.heatmap(
@@ -111,16 +107,14 @@ def generate_confusion_matrix(
 
 
 def generate_performance_data_frame(
-    k_fold: int, score_dict: Dict[str, Dict[str, float]], data_type: str, save_path: str
+    score_dict: Dict[str, float], data_type: str, save_path: str
 ):
     save_file_path = osp.join(save_path, f"{data_type}_K-fold_performance.csv")
     index = []
     data = []
-    for label, k_fold_data in score_dict.items():
+    for label, score in score_dict.items():
         index.append(label)
-        data.append([k_fold_values for k_fold_values in k_fold_data.values()])
+        data.append(score)
 
-    performance_df = pd.DataFrame(
-        data, index=index, columns=[f"{idx + 1}_fold" for idx in range(k_fold)]
-    )
+    performance_df = pd.DataFrame(data, index=index, columns=["weighted_F1_score"])
     performance_df.to_csv(osp.join(save_file_path))

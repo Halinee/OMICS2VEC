@@ -93,17 +93,16 @@ class Analysis(Task):
 
     def load_prediction(
         self, embed: np.ndarray
-    ) -> Tuple[
-        Dict[str, Dict[str, Dict[str, List[Union[int, float]]]]],
-        Dict[str, Dict[str, float]],
-    ]:
+    ) -> Tuple[Dict[str, Dict[str, List[Union[int, float]]]], Dict[str, float],]:
         result_dict = {}
         score_dict = {}
         for label in self.config["label_type"]:
             result_dict[label] = {}
             score_dict[label] = {}
             y = self.label[label].values
-            test_idx = [np.where(self.data_idx == i)[0][0] for i in self.test_sample]
+            test_idx = [
+                np.where(np.array(self.data_idx) == i)[0][0] for i in self.test_sample
+            ]
             train_idx = list(set(range(len(self.data_idx))) - set(test_idx))
             x_train, x_test = embed[train_idx], embed[test_idx]
             y_train, y_test = y[train_idx], y[test_idx]
@@ -150,6 +149,7 @@ class Analysis(Task):
         analysis_dict.update(data_dict)
         analysis_dict.update(reconstructed_data_dict)
         for name, data in analysis_dict.items():
+            print(f"Analysis {name} data...")
             tsne = self.load_tsne(data)
             generate_tsne(
                 tsne=tsne,
@@ -164,7 +164,6 @@ class Analysis(Task):
             result_dict, score_dict = self.load_prediction(data)
             print("Generate performance evaluation results...")
             generate_performance_data_frame(
-                k_fold=self.random_forest_params["k_fold"],
                 score_dict=score_dict,
                 data_type=name,
                 save_path=self.save_file_path,
