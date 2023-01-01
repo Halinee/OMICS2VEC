@@ -63,11 +63,11 @@ class Preprocess(Task):
                 ["0", "1"], repeat=len(self.config["data_type"])
             )
         ]
-        color_map = cm.get_cmap("jet", len(masking_case))
+        color_map = cm.get_cmap("gist_rainbow", len(masking_case) - 1)
         masking_color = [
             matplotlib.colors.rgb2hex(color_map(color_index))
             for color_index in range(color_map.N)
-        ]
+        ] + ["#dedede"]
         color["authenticity"] = {
             case: color for case, color in zip(masking_case, masking_color)
         }
